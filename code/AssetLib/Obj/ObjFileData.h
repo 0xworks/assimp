@@ -47,6 +47,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <assimp/types.h>
 #include <map>
 #include <vector>
+#include "Common/Maybe.h"
 
 namespace Assimp {
 namespace ObjFile {
@@ -133,6 +134,10 @@ struct Material {
     aiString textureSpecularity;
     aiString textureOpacity;
     aiString textureDisp;
+    aiString textureRoughness;
+    aiString textureMetallic;
+    aiString textureSheen;
+    aiString textureRMA;
 
     enum TextureType {
         TextureDiffuseType = 0,
@@ -151,6 +156,10 @@ struct Material {
         TextureSpecularityType,
         TextureOpacityType,
         TextureDispType,
+        TextureRoughnessType,
+        TextureMetallicType,
+        TextureSheenType,
+        TextureRMAType,
         TextureTypeCount
     };
     bool clamp[TextureTypeCount];
@@ -174,6 +183,22 @@ struct Material {
     //! Transparency color
     aiColor3D transparent;
 
+    //! PBR Roughness
+    Maybe<ai_real> roughness;
+    //! PBR Metallic
+    Maybe<ai_real> metallic;
+    //! PBR Metallic
+    Maybe<aiColor3D> sheen;
+    //! PBR Clearcoat Thickness
+    Maybe<ai_real> clearcoat_thickness;
+    //! PBR Clearcoat Rougness
+    Maybe<ai_real> clearcoat_roughness;
+    //! PBR Anisotropy
+    ai_real anisotropy;
+
+    //! bump map multipler (normal map scalar)(-bm)
+    ai_real bump_multiplier;
+
     //! Constructor
     Material() :
             diffuse(ai_real(0.6), ai_real(0.6), ai_real(0.6)),
@@ -181,7 +206,14 @@ struct Material {
             shineness(ai_real(0.0)),
             illumination_model(1),
             ior(ai_real(1.0)),
-            transparent(ai_real(1.0), ai_real(1.0), ai_real(1.0)) {
+            transparent(ai_real(1.0), ai_real(1.0), ai_real(1.0)),
+            roughness(),
+            metallic(),
+            sheen(),
+            clearcoat_thickness(),
+            clearcoat_roughness(),
+            anisotropy(ai_real(0.0)),
+            bump_multiplier(ai_real(1.0)) {
         std::fill_n(clamp, static_cast<unsigned int>(TextureTypeCount), false);
     }
 

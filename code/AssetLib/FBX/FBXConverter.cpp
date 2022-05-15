@@ -2,7 +2,7 @@
 Open Asset Import Library (assimp)
 ----------------------------------------------------------------------
 
-Copyright (c) 2006-2021, assimp team
+Copyright (c) 2006-2022, assimp team
 
 All rights reserved.
 
@@ -232,7 +232,6 @@ void FBXConverter::ConvertNodes(uint64_t id, aiNode *parent, aiNode *root_node) 
             nodes_chain.clear();
             post_nodes_chain.clear();
 
-            aiMatrix4x4 new_abs_transform = parent->mTransformation;
             std::string node_name = FixNodeName(model->Name());
             // even though there is only a single input node, the design of
             // assimp (or rather: the complicated transformation chain that
@@ -266,12 +265,10 @@ void FBXConverter::ConvertNodes(uint64_t id, aiNode *parent, aiNode *root_node) 
 
                 child->mParent = last_parent;
                 last_parent = child.mNode;
-
-                new_abs_transform *= child->mTransformation;
             }
 
             // attach geometry
-            ConvertModel(*model, nodes_chain.back().mNode, root_node, new_abs_transform);
+            ConvertModel(*model, nodes_chain.back().mNode, root_node);
 
             // check if there will be any child nodes
             const std::vector<const Connection *> &child_conns = doc.GetConnectionsByDestinationSequenced(model->ID(), "Model");
@@ -290,8 +287,6 @@ void FBXConverter::ConvertNodes(uint64_t id, aiNode *parent, aiNode *root_node) 
 
                     postnode->mParent = last_parent;
                     last_parent = postnode.mNode;
-
-                    new_abs_transform *= postnode->mTransformation;
                 }
             } else {
                 // free the nodes we allocated as we don't need them
@@ -653,7 +648,7 @@ bool FBXConverter::NeedsComplexTransformationChain(const Model &model) {
     const PropertyTable &props = model.Props();
     bool ok;
 
-    const float zero_epsilon = 1e-6f;
+    const float zero_epsilon = ai_epsilon;
     const aiVector3D all_ones(1.0f, 1.0f, 1.0f);
     for (size_t i = 0; i < TransformationComp_MAXIMUM; ++i) {
         const TransformationComp comp = static_cast<TransformationComp>(i);
@@ -899,8 +894,7 @@ void FBXConverter::SetupNodeMetadata(const Model &model, aiNode &nd) {
     }
 }
 
-void FBXConverter::ConvertModel(const Model &model, aiNode *parent, aiNode *root_node,
-        const aiMatrix4x4 &absolute_transform) {
+void FBXConverter::ConvertModel(const Model &model, aiNode *parent, aiNode *root_node) {
     const std::vector<const Geometry *> &geos = model.GetGeometry();
 
     std::vector<unsigned int> meshes;
@@ -911,8 +905,7 @@ void FBXConverter::ConvertModel(const Model &model, aiNode *parent, aiNode *root
         const MeshGeometry *const mesh = dynamic_cast<const MeshGeometry *>(geo);
         const LineGeometry *const line = dynamic_cast<const LineGeometry *>(geo);
         if (mesh) {
-            const std::vector<unsigned int> &indices = ConvertMesh(*mesh, model, parent, root_node,
-                    absolute_transform);
+            const std::vector<unsigned int> &indices = ConvertMesh(*mesh, model, parent, root_node);
             std::copy(indices.begin(), indices.end(), std::back_inserter(meshes));
         } else if (line) {
             const std::vector<unsigned int> &indices = ConvertLine(*line, root_node);
@@ -933,8 +926,7 @@ void FBXConverter::ConvertModel(const Model &model, aiNode *parent, aiNode *root
 }
 
 std::vector<unsigned int>
-FBXConverter::ConvertMesh(const MeshGeometry &mesh, const Model &model, aiNode *parent, aiNode *root_node,
-        const aiMatrix4x4 &absolute_transform) {
+FBXConverter::ConvertMesh(const MeshGeometry &mesh, const Model &model, aiNode *parent, aiNode *root_node) {
     std::vector<unsigned int> temp;
 
     MeshMap::const_iterator it = meshes_converted.find(&mesh);
@@ -957,13 +949,13 @@ FBXConverter::ConvertMesh(const MeshGeometry &mesh, const Model &model, aiNode *
         const MatIndexArray::value_type base = mindices[0];
         for (MatIndexArray::value_type index : mindices) {
             if (index != base) {
-                return ConvertMeshMultiMaterial(mesh, model, parent, root_node, absolute_transform);
+                return ConvertMeshMultiMaterial(mesh, model, parent, root_node);
             }
         }
     }
 
     // faster code-path, just copy the data
-    temp.push_back(ConvertMeshSingleMaterial(mesh, model, absolute_transform, parent, root_node));
+    temp.push_back(ConvertMeshSingleMaterial(mesh, model, parent, root_node));
     return temp;
 }
 
@@ -1032,8 +1024,7 @@ aiMesh *FBXConverter::SetupEmptyMesh(const Geometry &mesh, aiNode *parent) {
 }
 
 unsigned int FBXConverter::ConvertMeshSingleMaterial(const MeshGeometry &mesh, const Model &model,
-        const aiMatrix4x4 &absolute_transform, aiNode *parent,
-        aiNode *) {
+        aiNode *parent, aiNode *) {
     const MatIndexArray &mindices = mesh.GetMaterialIndices();
     aiMesh *const out_mesh = SetupEmptyMesh(mesh, parent);
 
@@ -1152,7 +1143,7 @@ unsigned int FBXConverter::ConvertMeshSingleMaterial(const MeshGeometry &mesh, c
     }
 
     if (doc.Settings().readWeights && mesh.DeformerSkin() != nullptr) {
-        ConvertWeights(out_mesh, mesh, absolute_transform, parent, NO_MATERIAL_SEPARATION, nullptr);
+        ConvertWeights(out_mesh, mesh, parent, NO_MATERIAL_SEPARATION, nullptr);
     }
 
     std::vector<aiAnimMesh *> animMeshes;
@@ -1200,8 +1191,7 @@ unsigned int FBXConverter::ConvertMeshSingleMaterial(const MeshGeometry &mesh, c
 
 std::vector<unsigned int>
 FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, const Model &model, aiNode *parent,
-        aiNode *root_node,
-        const aiMatrix4x4 &absolute_transform) {
+        aiNode *root_node) {
     const MatIndexArray &mindices = mesh.GetMaterialIndices();
     ai_assert(mindices.size());
 
@@ -1211,7 +1201,7 @@ FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, const Model &mo
     for (MatIndexArray::value_type index : mindices) {
         if (had.find(index) == had.end()) {
 
-            indices.push_back(ConvertMeshMultiMaterial(mesh, model, index, parent, root_node, absolute_transform));
+            indices.push_back(ConvertMeshMultiMaterial(mesh, model, index, parent, root_node));
             had.insert(index);
         }
     }
@@ -1221,8 +1211,7 @@ FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, const Model &mo
 
 unsigned int FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, const Model &model,
         MatIndexArray::value_type index,
-        aiNode *parent, aiNode *,
-        const aiMatrix4x4 &absolute_transform) {
+        aiNode *parent, aiNode *) {
     aiMesh *const out_mesh = SetupEmptyMesh(mesh, parent);
 
     const MatIndexArray &mindices = mesh.GetMaterialIndices();
@@ -1267,7 +1256,7 @@ unsigned int FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, co
     const std::vector<aiVector3D> &normals = mesh.GetNormals();
     if (normals.size()) {
         ai_assert(normals.size() == vertices.size());
-        out_mesh->mNormals = new aiVector3D[vertices.size()];
+        out_mesh->mNormals = new aiVector3D[count_vertices];
     }
 
     // allocate tangents, binormals.
@@ -1295,8 +1284,8 @@ unsigned int FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, co
             ai_assert(tangents.size() == vertices.size());
             ai_assert(binormals->size() == vertices.size());
 
-            out_mesh->mTangents = new aiVector3D[vertices.size()];
-            out_mesh->mBitangents = new aiVector3D[vertices.size()];
+            out_mesh->mTangents = new aiVector3D[count_vertices];
+            out_mesh->mBitangents = new aiVector3D[count_vertices];
         }
     }
 
@@ -1308,7 +1297,7 @@ unsigned int FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, co
             break;
         }
 
-        out_mesh->mTextureCoords[i] = new aiVector3D[vertices.size()];
+        out_mesh->mTextureCoords[i] = new aiVector3D[count_vertices];
         out_mesh->mNumUVComponents[i] = 2;
     }
 
@@ -1320,7 +1309,7 @@ unsigned int FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, co
             break;
         }
 
-        out_mesh->mColors[i] = new aiColor4D[vertices.size()];
+        out_mesh->mColors[i] = new aiColor4D[count_vertices];
     }
 
     unsigned int cursor = 0, in_cursor = 0;
@@ -1385,7 +1374,7 @@ unsigned int FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, co
     ConvertMaterialForMesh(out_mesh, model, mesh, index);
 
     if (process_weights) {
-        ConvertWeights(out_mesh, mesh, absolute_transform, parent, index, &reverseMapping);
+        ConvertWeights(out_mesh, mesh, parent, index, &reverseMapping);
     }
 
     std::vector<aiAnimMesh *> animMeshes;
@@ -1436,7 +1425,6 @@ unsigned int FBXConverter::ConvertMeshMultiMaterial(const MeshGeometry &mesh, co
 }
 
 void FBXConverter::ConvertWeights(aiMesh *out, const MeshGeometry &geo,
-        const aiMatrix4x4 &absolute_transform,
         aiNode *parent, unsigned int materialIndex,
         std::vector<unsigned int> *outputVertStartIndices) {
     ai_assert(geo.DeformerSkin());
@@ -1508,7 +1496,7 @@ void FBXConverter::ConvertWeights(aiMesh *out, const MeshGeometry &geo,
             // XXX this could be heavily simplified by collecting the bone
             // data in a single step.
             ConvertCluster(bones, cluster, out_indices, index_out_indices,
-                    count_out_indices, absolute_transform, parent);
+                    count_out_indices, parent);
         }
 
         bone_map.clear();
@@ -1537,8 +1525,7 @@ const aiNode *GetNodeByName(aiNode *current_node) {
 
 void FBXConverter::ConvertCluster(std::vector<aiBone *> &local_mesh_bones, const Cluster *cl,
         std::vector<size_t> &out_indices, std::vector<size_t> &index_out_indices,
-        std::vector<size_t> &count_out_indices, const aiMatrix4x4 &absolute_transform,
-        aiNode *) {
+        std::vector<size_t> &count_out_indices, aiNode *) {
     ai_assert(cl); // make sure cluster valid
     std::string deformer_name = cl->TargetNode()->Name();
     aiString bone_name = aiString(FixNodeName(deformer_name));
@@ -1553,14 +1540,16 @@ void FBXConverter::ConvertCluster(std::vector<aiBone *> &local_mesh_bones, const
         bone = new aiBone();
         bone->mName = bone_name;
 
+        bone->mOffsetMatrix = cl->Transform();
         // store local transform link for post processing
+        /*
         bone->mOffsetMatrix = cl->TransformLink();
         bone->mOffsetMatrix.Inverse();
 
         aiMatrix4x4 matrix = (aiMatrix4x4)absolute_transform;
 
         bone->mOffsetMatrix = bone->mOffsetMatrix * matrix; // * mesh_offset
-
+        */
         //
         // Now calculate the aiVertexWeights
         //
@@ -2070,6 +2059,7 @@ void FBXConverter::SetTextureProperties(aiMaterial *out_mat, const LayeredTextur
     TrySetTextureProperties(out_mat, layeredTextures, "ShininessExponent", aiTextureType_SHININESS, mesh);
     TrySetTextureProperties(out_mat, layeredTextures, "EmissiveFactor", aiTextureType_EMISSIVE, mesh);
     TrySetTextureProperties(out_mat, layeredTextures, "TransparencyFactor", aiTextureType_OPACITY, mesh);
+    TrySetTextureProperties(out_mat, layeredTextures, "ReflectionFactor", aiTextureType_METALNESS, mesh);
 }
 
 aiColor3D FBXConverter::GetColorPropertyFactored(const PropertyTable &props, const std::string &colorName,
@@ -2160,6 +2150,9 @@ void FBXConverter::SetShadingPropertiesCommon(aiMaterial *out_mat, const Propert
     const float ShininessExponent = PropertyGet<float>(props, "ShininessExponent", ok);
     if (ok) {
         out_mat->AddProperty(&ShininessExponent, 1, AI_MATKEY_SHININESS);
+         // Match Blender behavior to extract roughness when only shininess is present
+        const float roughness = 1.0 - (sqrt(ShininessExponent) / 10.0);
+        out_mat->AddProperty(&roughness, 1, AI_MATKEY_ROUGHNESS_FACTOR);
     }
 
     // TransparentColor / TransparencyFactor... gee thanks FBX :rolleyes:
@@ -3127,7 +3120,12 @@ aiNodeAnim* FBXConverter::GenerateSimpleNodeAnim(const std::string& name,
         if (chain[i] == iterEnd)
             continue;
 
-        keyframeLists[i] = GetKeyframeList((*chain[i]).second, start, stop);
+        if (i == TransformationComp_Rotation || i == TransformationComp_PreRotation
+                || i == TransformationComp_PostRotation || i == TransformationComp_GeometricRotation) {
+            keyframeLists[i] = GetRotationKeyframeList((*chain[i]).second, start, stop);
+        } else {
+            keyframeLists[i] = GetKeyframeList((*chain[i]).second, start, stop);
+        }
 
         for (KeyFrameListList::const_iterator it = keyframeLists[i].begin(); it != keyframeLists[i].end(); ++it) {
             const KeyTimeList& times = *std::get<0>(*it);
@@ -3181,7 +3179,8 @@ aiNodeAnim* FBXConverter::GenerateSimpleNodeAnim(const std::string& name,
     }
 
     bool ok = false;
-    const float zero_epsilon = 1e-6f;
+    
+    const float zero_epsilon = ai_epsilon;
 
     const aiVector3D& preRotation = PropertyGet<aiVector3D>(props, "PreRotation", ok);
     if (ok && preRotation.SquareLength() > zero_epsilon) {
@@ -3272,6 +3271,79 @@ FBXConverter::KeyFrameListList FBXConverter::GetKeyframeList(const std::vector<c
         }
     }
     return inputs; // pray for NRVO :-)
+}
+
+FBXConverter::KeyFrameListList FBXConverter::GetRotationKeyframeList(const std::vector<const AnimationCurveNode *> &nodes,
+                                                                     int64_t start, int64_t stop) {
+    KeyFrameListList inputs;
+    inputs.reserve(nodes.size() * 3);
+
+    //give some breathing room for rounding errors
+    const int64_t adj_start = start - 10000;
+    const int64_t adj_stop = stop + 10000;
+
+    for (const AnimationCurveNode *node : nodes) {
+        ai_assert(node);
+
+        const AnimationCurveMap &curves = node->Curves();
+        for (const AnimationCurveMap::value_type &kv : curves) {
+
+            unsigned int mapto;
+            if (kv.first == "d|X") {
+                mapto = 0;
+            } else if (kv.first == "d|Y") {
+                mapto = 1;
+            } else if (kv.first == "d|Z") {
+                mapto = 2;
+            } else {
+                FBXImporter::LogWarn("ignoring scale animation curve, did not recognize target component");
+                continue;
+            }
+
+            const AnimationCurve *const curve = kv.second;
+            ai_assert(curve->GetKeys().size() == curve->GetValues().size());
+            ai_assert(curve->GetKeys().size());
+
+            //get values within the start/stop time window
+            std::shared_ptr<KeyTimeList> Keys(new KeyTimeList());
+            std::shared_ptr<KeyValueList> Values(new KeyValueList());
+            const size_t count = curve->GetKeys().size();
+
+            int64_t tp = curve->GetKeys().at(0);
+            float vp = curve->GetValues().at(0);
+            Keys->push_back(tp);
+            Values->push_back(vp);
+            if (count > 1) {
+                int64_t tc = curve->GetKeys().at(1);
+                float vc = curve->GetValues().at(1);
+                for (size_t n = 1; n < count; n++) {
+                    while (std::abs(vc - vp) >= 180.0f) {
+                        float step = std::floor(float(tc - tp) / (vc - vp) * 179.0f);
+                        int64_t tnew = tp + int64_t(step);
+                        float vnew = vp + (vc - vp) * step / float(tc - tp);
+                        if (tnew >= adj_start && tnew <= adj_stop) {
+                            Keys->push_back(tnew);
+                            Values->push_back(vnew);
+                        }
+                        tp = tnew;
+                        vp = vnew;
+                    }
+                    if (tc >= adj_start && tc <= adj_stop) {
+                        Keys->push_back(tc);
+                        Values->push_back(vc);
+                    }
+                    if (n + 1 < count) {
+                        tp = tc;
+                        vp = vc;
+                        tc = curve->GetKeys().at(n + 1);
+                        vc = curve->GetValues().at(n + 1);
+                    }
+                }
+            }
+            inputs.push_back(std::make_tuple(Keys, Values, mapto));
+        }
+    }
+    return inputs;
 }
 
 KeyTimeList FBXConverter::GetKeyTimeList(const KeyFrameListList &inputs) {
@@ -3464,7 +3536,7 @@ void FBXConverter::ConvertRotationKeys(aiNodeAnim *na, const std::vector<const A
     ai_assert(nodes.size());
 
     // XXX see notes in ConvertScaleKeys()
-    const std::vector<KeyFrameList> &inputs = GetKeyframeList(nodes, start, stop);
+    const std::vector<KeyFrameList> &inputs = GetRotationKeyframeList(nodes, start, stop);
     const KeyTimeList &keys = GetKeyTimeList(inputs);
 
     na->mNumRotationKeys = static_cast<unsigned int>(keys.size());
